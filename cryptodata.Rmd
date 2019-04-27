@@ -1,0 +1,357 @@
+---
+title: "Forecasting Crypto Data: Project Report"
+author: |
+  | Roger Garcia
+  | Data Science with R., Spring 2019
+  | Dr. J. Edward Swan II
+  | Mississippi State University
+date: "Fri Apr 26 2019"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+  word_document: default
+  html_document:
+    highlight: pygments
+    theme: readable
+    number_sections: true
+bibliography: cryptodata.bib
+---
+
+\newpage
+
+# Introduction
+## Course description
+The goal of this report is to share my results as part of my coursework in *Science Data with R* during Spring 2019. The course (Professor: Dr. J. Edward Swan II) focuses on introducing the fundamental elements of data science: visual analysis, data manipulation and modeling. The objective of this semester project was to find a dataset and go through all of the stages of the *Data Science Workflow* (see Figure 1 or [R for Data Science](https://r4ds.had.co.nz/explore-intro.html)), present findings to classmates and submit a presentation and written report on findings.
+
+
+![Data Science Workflow](images/data-science.png)
+
+## Motivation and background
+Investing, markets, financial institutions and trading are not new concepts, but in fact have been around for decades and while investing was only something the very wealthy were allowed to do, now a days individuals have a variety of options to invest.
+
+Over the past several years, further attention has been given to the use of blockchain technology in education, finance, healthcare and for social good.  Despite, the fundamental concepts surrounding this technology not being new, its ever-expanding interest can be trace back to the popularity of Bitcoin [see @nakamoto2008]. 
+
+Having invested in Bitcoin in *July 29, 2017* (*2017-07-29*) for the first time and along with a favorite John Tukey quote of mine, "The greatest value of a picture is when it forces us to notice what we never expected to see", I wanted to force myself to self-reflect upon the brutal truth of my own investing/trading decisions. 
+
+For this reason, during this project I've analyze crypto market data in order to build discussion on what's occur in the *crypto* space, in particularly with Bitcoin and top ten other cryptocurrencies or alts. Endeavored to improve the quality of my own investing decisions I apply techniques used in class to build a higher level abstraction from such a dataset in the form of simple stories or visualizations and let this project be meaningful to me (and hopefully valuable to others) beyond this course.
+
+\newpage 
+
+# Importing Data
+
+***Note:*** *Along with this work, I have provided `cryptodata.RData` that contains saved `R` objects that can be used to reproduce results, in this case there is no need to create an account, unless you want up to date market data*
+
+It is possible to retrieve current and historical information on cryptocurrency prices with the use of `crypto` package by Jesse Vent (see Reference Manual: [crypto.pdf](https://cran.r-project.org/web/packages/crypto/crypto.pdf)).
+
+
+
+## Load required packages
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo=TRUE, cache=TRUE, fig.asp=0.65, fig.width = 6.0)
+
+require("crypto")
+require("tidyverse")
+require("lubridate") # makes it easier to work with dates and times
+require("tseries")   # Dickey-Fuller Test
+require("forecast")
+```
+
+
+
+## Get `crypto` market data
+
+There are few things to do before getting started in order to retrieve data (if you haven't already):
+
+* `CoinMarketCap API`: create an account, decide on pricing plan (*basic personal use suffice for project*) and get free api key.
+
+* `api key`: You will be prompt to paste your api key:
+
+```{r,eval=FALSE}
+    # CoinMarketCap Professional API Call
+    cmc_api("https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest")
+```
+
+* `Get historic market tables`:
+
+```{r,eval=FALSE}
+    # get historical market data
+    # (last request: Mon Aprl 15 2019 5pm)
+    # (convert to type "tbl_df")
+    
+    #Bitcoin
+    btc_hist_prices <- as_tibble(crypto_history(coin = "btc"))
+  
+    #Top-ten ranked alts
+    topten_coins <- as_tibble(crypto_history(limit = 10))
+```
+
+
+
+To avoid making multiple calls to `api`, it is useful to save out our dataset using `save.image()` to then load it for future uses. 
+
+```{r}
+  load("cryptodata.RData")
+  # btc_hist_prices <- btc_hist_prices
+  # topten_coins <- topten_coins
+```
+
+## `Tibble` printing
+
+This block of code will run and output the *last* 5 rows of our datasets, OHLC (Opening, High, Low and Closing) market data along with column names of datasets.
+
+```{r}
+  #Bitcoin (BTC)
+  tail(btc_hist_prices, n = 5)
+  colnames(btc_hist_prices)
+
+  #Top-ten ranked cryptocurrencies
+  tail(topten_coins, n = 5)
+  colnames(topten_coins)
+```
+
+
+
+# Data Exploration and Data Cleaning
+One may be interested in exploring the correlation between *alts* and *BTC*, for this reason it may be useful to add a new variable `BTC_value` that will contain the ratio of *ALTS/BTC*. For purposes of this project, I only focus on exploring *closing prices* of our market data, since it tends to be the end of trading day which is used to make decisions for the following day (in traditional markets). 
+
+***Note:*** *Crypto markets are open 24/7*.
+
+## Dataset options
+I will create a new dataset named `topten_coins_meta` containing the additional variable `BTC_value_close` and will make sure we are using an object class `Date` representing calendar dates for our initial provided variable `date`:
+
+```{r}
+btc_close_dates <- topten_coins %>% 
+  filter(symbol == "BTC") %>%
+  transmute(date = as.Date(date, format = "%Y-%m-%d"),
+            BTC_close = close)
+
+topten_coins_meta <- topten_coins %>%
+  left_join(btc_close_dates, by = "date") %>%
+  mutate(BTC_value_close = round(close / BTC_close, digits = 8))
+
+head(topten_coins_meta)
+```
+
+
+let's make sure our date variable is of class `"Date"` with desire format:
+
+```{r}
+sapply(topten_coins_meta,
+       function(x) !all(is.na(as.Date(as.character(x),
+                                      format="%Y-%m-%d"))))
+```
+
+We notice from the resulting output above that date has a `TRUE` value confirming that we indeed have a `Date` object with the desire format. In our case, it was not necessary to perform a date conversion since our initial data was in the desire format but it is good practice to verify our date variable in our dataset.
+
+
+## Visualize
+
+Plot relationship between data and closing price (BTC):
+
+```{r}
+btc_hist_prices %>%
+  ggplot(mapping = aes(x = date, y = close)) +
+  geom_point() +
+  geom_smooth() +
+  ggtitle(paste("Closing prices for Bitcoin (BTC) from", 
+              min(btc_hist_prices$date), "to",
+              max(btc_hist_prices$date))) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Awesome !, we can immediately notice a surge of prices for the value of Bitcoin in USD towards the end of 2017 and an immediate decline of prices at the start of 2018.
+
+what about visualizing data since one's first trade?. The following block of code will `filter()` and subset data containing data since one's first trade (we will do the same for top ten): 
+
+```{r}
+#OHLC since first trade
+since_first_trade <- filter(btc_hist_prices, date >= "2017-07-29")
+
+```
+
+let's store the date of our first trade to a variable for future uses:
+```{r}
+first_trade_date <- "2017-07-29"
+```
+
+```{r}
+
+#OHLC top ten
+topten_since_first_trade <- filter(topten_coins, date >= first_trade_date)
+
+#lets view our dataset
+since_first_trade
+```
+
+
+We can now plot our new datasets:
+
+```{r}
+since_first_trade %>%
+  ggplot(mapping = aes(x = date, y = close)) +
+  geom_point() +
+  geom_smooth() +
+  ggtitle(paste("Closing prices for Bitcoin (BTC) from", 
+              min(since_first_trade$date), "to",
+              max(since_first_trade$date))) +
+  theme(plot.title = element_text(hjust = 0.5))
+  
+```
+
+
+
+
+```{r}
+# plot relationship between date and closing price since first trade (top ten coins)
+topten_since_first_trade %>%
+ggplot(mapping = aes(x = date, y = close, color = symbol)) +
+  geom_point() +
+  ggtitle(paste("Closing prices Top 10 from", 
+                min(topten_since_first_trade$date), "to",
+                max(topten_since_first_trade$date))) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Let's remove `BTC`: 
+
+```{r}
+# plot relationship between date and closing price since first trade (top ten coins) no BTC
+
+filter(topten_since_first_trade, symbol != "BTC") %>%
+  ggplot( mapping = aes(x = date, y = close, color = symbol)) +
+  geom_point() +
+  ggtitle(paste("Closing prices from", 
+                min(topten_since_first_trade$date), "to",
+                max(topten_since_first_trade$date))) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+Lets plot same plot but view in terms of Bitcoin value or `BTC_value_close`:
+
+```{r}
+# plot relationship between date and closing BTC value since first trade (top ten coins)
+# no need to plot BTC (horizontal line at 1.0)
+
+filter(topten_coins_meta, date >= first_trade_date, symbol != "BTC") %>%
+  ggplot(mapping = aes(x = date , y = BTC_value_close, color = symbol)) +
+  geom_point() +
+  ggtitle(paste("Closing BTC value from", 
+                min(topten_since_first_trade$date), "to",
+                max(topten_since_first_trade$date))) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Can we plot a different way? let's try using `facet()`:
+
+```{r}
+
+filter(topten_coins_meta, date >= first_trade_date, symbol != "BTC") %>%
+  ggplot(mapping = aes(x = date, y = BTC_value_close)) +
+  geom_point() + 
+  facet_wrap(~ symbol, nrow = 3)
+```
+
+# Model
+To begin our modeling stage, we need to have a time series numeric vector or time series of class `ts`:
+
+## Time series data pre-processing 
+
+```{r}
+startW <- as.numeric(strftime(head(btc_close_dates$date, 1), format = "%W"))
+startD <- as.numeric(strftime(head(btc_close_dates$date, 1) + 1, format =" %w")) 
+
+btc_close_ts <- ts(btc_close_dates$BTC_close,
+                  frequency = 7,
+                  start = c(startW, startD)
+                  )
+
+btc_close_ts_freq1 <- ts(btc_close_dates$BTC_close,
+                  frequency = 1,
+                  start = c(startW, startD)
+                  )
+
+#spring 2019 classes begin
+btc_close_sp19 <- btc_close_dates %>%
+  filter(date >= "2019-01-07")
+
+
+startW_sp19 <- as.numeric(strftime(head(btc_close_sp19$date, 1), format = "%W"))
+startD_sp19 <- as.numeric(strftime(head(btc_close_sp19$date, 1) + 1, format =" %w")) 
+
+btc_close_sp19_ts <-ts(btc_close_sp19$BTC_close,
+                      frequency = 7,
+                      start = c(startW_sp19, startD_sp19)
+                      )
+
+```
+
+
+check first and last observation weekdays align with time series objects:
+
+```{r}
+# print(btc_close_ts, calendar = T)
+head(btc_close_ts, 10)
+
+head(btc_close_dates$date, 1)
+weekdays(head(btc_close_dates$date,1))
+
+tail(btc_close_dates$date, 1)
+weekdays(tail(btc_close_dates$date,1))
+
+
+```
+
+
+## Exponential smoothing 
+
+```{r}
+fit1 <- ets(btc_close_ts)
+
+plot(forecast(fit1), 
+     xlab="week of year",
+     ylab="closing price", 
+     main="Daily closing price of Bitcoin (2013-2019)")
+
+fit2 <- ets(btc_close_sp19_ts)
+plot(forecast(fit2), 
+     xlab="week of year", 
+     ylab="closing price", 
+     main="Daily closing price of Bitcoin 2019-01-07 to 2019-04-14")
+```
+
+
+## Arima modeling
+
+```{r}
+fit_opt_btc_close <- auto.arima(btc_close_ts_freq1)
+
+fit_opt_btc_close
+
+
+coef(fit_opt_btc_close)
+
+#use predictive function
+predict(fit_opt_btc_close, n.ahead = 7, se.fit = TRUE)
+
+#visualize results
+btc_forecast <- forecast(object = fit_opt_btc_close, h = 7)
+plot(btc_forecast)
+
+
+#You can include = X observations of the original series in your plot with:
+  
+plot(forecast(fit_opt_btc_close, h= 7), include = 100)
+
+
+```
+
+
+
+# Conclusion and Future Work
+In this paper, the use of time series data is used to work through all the stages of the *Data Science Workflow*, results of these efforts are reported here. This report, written as part of coursework of *Data Science with R*, is intended as a first step towards understanding the underlying structure and functions involve in working with time series data. For this reason, I look forward to continue working with financial time series data, in particuarly, crypto market data and update results accordingly to github repo.
+
+# References
+

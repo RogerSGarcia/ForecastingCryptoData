@@ -1,2 +1,2 @@
-# ForecastingCryptoData
-Project on Forecasting Crypto Market Data using R
+# Forecasting Cryptocurrency Market Data
+The goal of this repo is to share results as part of my coursework in Science Data with R during Spring 2019. The course (Professor: Dr. J. Edward Swan II) focuses on introducing the fundamental elements of data science: visual analysis, data manipulation and modeling.
